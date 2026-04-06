@@ -111,3 +111,36 @@ router.put('/profil', proteger, async (req, res) => {
 });
 
 module.exports = router;
+
+
+// ─── Reset Admin (une seule fois) ─────────────────────────────────────────────
+// POST /api/auth/reset-admin
+router.post('/reset-admin', async (req, res) => {
+  const { cleSecrete } = req.body;
+  if (cleSecrete !== process.env.SEED_SECRET) {
+    return res.status(403).json({ succes: false, message: 'Clé invalide' });
+  }
+  try {
+    // Supprimer tous les admins existants
+    await User.deleteMany({ role: 'admin' });
+    
+    // Créer le nouvel admin — le hook pre('save') va hasher le mot de passe
+    const admin = new User({
+      nom: 'Admin',
+      prenom: 'MaisonLuxe',
+      email: 'admin@maisonluxe.ml',
+      motDePasse: 'Admin2025',
+      role: 'admin'
+    });
+    await admin.save(); // pre('save') déclenché → mot de passe hashé
+
+    res.json({
+      succes: true,
+      message: '✅ Admin réinitialisé',
+      email: 'admin@maisonluxe.ml',
+      motDePasse: 'Admin2025'
+    });
+  } catch (error) {
+    res.status(500).json({ succes: false, message: error.message });
+  }
+});
