@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: maison-luxe-y6fm
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: CINETPAY_API_KEY
+        sync: false
+      - key: CINETPAY_SITE_ID
+        sync: false
+      - key: CINETPAY_SECRET_KEY
+        sync: false
+      - key: CINETPAY_NOTIFY_URL
+        value: https://maison-luxe-y6fm.onrender.com/api/paiements/notify
+      - key: CINETPAY_RETURN_URL
+        value: https://wesh-mill.github.io/maison-luxe/
+      - key: FRONTEND_URL
+        value: https://wesh-mill.github.io
