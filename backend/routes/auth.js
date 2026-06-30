@@ -10,6 +10,9 @@ router.post('/inscription', [
   body('prenom').notEmpty().trim().withMessage('Prénom requis'),
   body('email').isEmail().normalizeEmail().withMessage('Email invalide'),
   body('motDePasse').isLength({ min: 6 }).withMessage('Mot de passe minimum 6 caractères'),
+  body('telephone').optional()
+    .trim()
+    .matches(/^[+\d\s\-().]{7,20}$/).withMessage('Numéro de téléphone invalide'),
 ], async (req, res) => {
   const erreurs = validationResult(req);
   if (!erreurs.isEmpty()) {
@@ -25,7 +28,7 @@ router.post('/inscription', [
     }
 
     const utilisateur = await User.create({ nom, prenom, email, motDePasse, telephone });
-    const token = genererToken(utilisateur._id);
+    const token = genererToken(utilisateur);
 
     res.status(201).json({
       succes: true,
@@ -40,7 +43,7 @@ router.post('/inscription', [
       }
     });
   } catch (error) {
-    res.status(500).json({ succes: false, message: 'Erreur serveur', erreur: error.message });
+    res.status(500).json({ succes: false, message: 'Erreur serveur', ...(process.env.NODE_ENV !== 'production' && { erreur: error.message }) });
   }
 });
 
@@ -71,7 +74,7 @@ router.post('/connexion', [
       return res.status(401).json({ succes: false, message: 'Compte désactivé. Contactez le support.' });
     }
 
-    const token = genererToken(utilisateur._id);
+    const token = genererToken(utilisateur);
 
     res.json({
       succes: true,
@@ -86,61 +89,62 @@ router.post('/connexion', [
       }
     });
   } catch (error) {
-    res.status(500).json({ succes: false, message: 'Erreur serveur', erreur: error.message });
+    res.status(500).json({ succes: false, message: 'Erreur serveur', ...(process.env.NODE_ENV !== 'production' && { erreur: error.message }) });
   }
 });
 
 // GET /api/auth/profil (protégé)
+// ⚠️  Après le Fix 10, req.utilisateur ne contient que {id, role, actif} issus du JWT.
+//     Pour le profil complet, on fait une requête DB ici — c'est la seule route qui
+//     a besoin des données complètes. Toutes les autres routes utilisent seulement
+//     req.utilisateur._id et req.utilisateur.role, donc pas de requête DB pour elles.
 router.get('/profil', proteger, async (req, res) => {
-  res.json({ succes: true, utilisateur: req.utilisateur });
+  try {
+    const utilisateur = await User.findById(req.utilisateur._id).select('-motDePasse');
+    if (!utilisateur) return res.status(404).json({ succes: false, message: 'Utilisateur introuvable' });
+    res.json({ succes: true, utilisateur });
+  } catch (error) {
+    res.status(500).json({ succes: false, message: 'Erreur serveur' });
+  }
 });
 
 // PUT /api/auth/profil (protégé)
-router.put('/profil', proteger, async (req, res) => {
+// Validation et sanitisation explicite :
+// - Le téléphone est validé en format (pas de script injectable)
+// - email et motDePasse sont exclus du corps : un user ne peut pas changer
+//   son email ou mot de passe via cette route (routes séparées à prévoir)
+// - La réponse exclut motDePasse via .select()
+router.put('/profil', proteger, [
+  body('nom').optional().trim().notEmpty().isLength({ max: 50 }).withMessage('Nom invalide'),
+  body('prenom').optional().trim().notEmpty().isLength({ max: 50 }).withMessage('Prénom invalide'),
+  body('telephone').optional().trim()
+    .matches(/^[\+\d\s\-\(\)]{7,20}$/).withMessage('Numéro de téléphone invalide'),
+  body('adresse.rue').optional().trim().isLength({ max: 200 }),
+  body('adresse.ville').optional().trim().isLength({ max: 100 }),
+], async (req, res) => {
+  const erreurs = validationResult(req);
+  if (!erreurs.isEmpty()) {
+    return res.status(400).json({ succes: false, message: 'Données invalides', erreurs: erreurs.array() });
+  }
   try {
+    // Whitelist stricte — email et motDePasse ne peuvent pas être modifiés ici
     const { nom, prenom, telephone, adresse } = req.body;
+    const update = {};
+    if (nom !== undefined) update.nom = nom;
+    if (prenom !== undefined) update.prenom = prenom;
+    if (telephone !== undefined) update.telephone = telephone;
+    if (adresse !== undefined) update.adresse = adresse;
+
     const utilisateur = await User.findByIdAndUpdate(
       req.utilisateur._id,
-      { nom, prenom, telephone, adresse },
+      update,
       { new: true, runValidators: true }
-    );
+    ).select('-motDePasse');
+
     res.json({ succes: true, utilisateur });
   } catch (error) {
-    res.status(500).json({ succes: false, message: 'Erreur mise à jour', erreur: error.message });
+    res.status(500).json({ succes: false, message: 'Erreur mise à jour' });
   }
 });
 
 module.exports = router;
-
-
-// ─── Reset Admin (une seule fois) ─────────────────────────────────────────────
-// POST /api/auth/reset-admin
-router.post('/reset-admin', async (req, res) => {
-  const { cleSecrete } = req.body;
-  if (cleSecrete !== process.env.SEED_SECRET) {
-    return res.status(403).json({ succes: false, message: 'Clé invalide' });
-  }
-  try {
-    // Supprimer tous les admins existants
-    await User.deleteMany({ role: 'admin' });
-    
-    // Créer le nouvel admin — le hook pre('save') va hasher le mot de passe
-    const admin = new User({
-      nom: 'Admin',
-      prenom: 'MaisonLuxe',
-      email: 'admin@maisonluxe.ml',
-      motDePasse: 'Admin2025',
-      role: 'admin'
-    });
-    await admin.save(); // pre('save') déclenché → mot de passe hashé
-
-    res.json({
-      succes: true,
-      message: '✅ Admin réinitialisé',
-      email: 'admin@maisonluxe.ml',
-      motDePasse: 'Admin2025'
-    });
-  } catch (error) {
-    res.status(500).json({ succes: false, message: error.message });
-  }
-});

@@ -35,16 +35,26 @@ router.get('/:id', proteger, async (req, res) => {
 router.get('/', proteger, admin, async (req, res) => {
   try {
     const { statut, page = 1, limit = 20 } = req.query;
-    const filtre = {};
-    if (statut) filtre.statut = statut;
 
-    const skip = (page - 1) * limit;
+    // Limiter à 100 max pour éviter qu'un admin envoie limit=999999
+    // et charge toute la collection en RAM d'un coup.
+    const safeLimitAdmin = Math.min(Math.max(1, Number(limit) || 20), 100);
+    const filtre = {};
+    if (statut) {
+      const statutsValides = ['en_attente','payee','en_preparation','expediee','livree','annulee'];
+      if (!statutsValides.includes(statut)) {
+        return res.status(400).json({ succes: false, message: 'Statut invalide' });
+      }
+      filtre.statut = statut;
+    }
+
+    const skip = (page - 1) * safeLimitAdmin;
     const total = await Commande.countDocuments(filtre);
     const commandes = await Commande.find(filtre)
       .populate('utilisateur', 'nom prenom email')
       .sort({ createdAt: -1 })
       .skip(skip)
-      .limit(Number(limit));
+      .limit(safeLimitAdmin);
 
     res.json({ succes: true, total, commandes });
   } catch (error) {
@@ -56,6 +66,15 @@ router.get('/', proteger, admin, async (req, res) => {
 router.put('/:id/statut', proteger, admin, async (req, res) => {
   try {
     const { statut } = req.body;
+
+    // Valider contre l'enum avant d'écrire en base.
+    // Sans ça, envoyer statut:"$gt" ou statut:"<script>" passe dans Mongoose
+    // et produit une erreur dont le message brut est renvoyé au client.
+    const statutsValides = ['en_attente','payee','en_preparation','expediee','livree','annulee'];
+    if (!statut || !statutsValides.includes(statut)) {
+      return res.status(400).json({ succes: false, message: `Statut invalide. Valeurs acceptées : ${statutsValides.join(', ')}` });
+    }
+
     const commande = await Commande.findByIdAndUpdate(
       req.params.id,
       { statut },
@@ -64,7 +83,7 @@ router.put('/:id/statut', proteger, admin, async (req, res) => {
     if (!commande) return res.status(404).json({ succes: false, message: 'Commande introuvable' });
     res.json({ succes: true, commande });
   } catch (error) {
-    res.status(400).json({ succes: false, message: error.message });
+    res.status(400).json({ succes: false, message: 'Erreur mise à jour statut' });
   }
 });
 

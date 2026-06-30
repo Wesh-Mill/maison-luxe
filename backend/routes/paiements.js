@@ -17,14 +17,20 @@ router.post('/initier', proteger, async (req, res) => {
       return res.status(400).json({ succes: false, message: 'Panier vide' });
     }
 
-    // Vérifier les produits et calculer le total
+    // ── Récupérer tous les produits en UNE seule requête MongoDB ──────────────
+    // Avant : boucle for...await avec un findById par produit = N requêtes séquentielles.
+    // Maintenant : un seul find({ _id: { $in: [...] } }) pour tout le panier.
+    const produitIds = lignes.map(l => l.produitId);
+    const produitsDB = await Produit.find({ _id: { $in: produitIds }, actif: true });
+    const produitMap = new Map(produitsDB.map(p => [p._id.toString(), p]));
+
     let prixTotal = 0;
     const lignesValidees = [];
 
     for (const ligne of lignes) {
-      const produit = await Produit.findById(ligne.produitId);
-      if (!produit || !produit.actif) {
-        return res.status(400).json({ succes: false, message: `Produit introuvable: ${ligne.produitId}` });
+      const produit = produitMap.get(ligne.produitId?.toString());
+      if (!produit) {
+        return res.status(400).json({ succes: false, message: `Produit introuvable ou désactivé: ${ligne.produitId}` });
       }
       if (produit.stock < ligne.quantite) {
         return res.status(400).json({ succes: false, message: `Stock insuffisant pour: ${produit.nom}` });
@@ -106,7 +112,7 @@ router.post('/initier', proteger, async (req, res) => {
 
   } catch (error) {
     console.error('Erreur paiement:', error.message);
-    res.status(500).json({ succes: false, message: 'Erreur lors du paiement', erreur: error.message });
+    res.status(500).json({ succes: false, message: 'Erreur lors du paiement', ...(process.env.NODE_ENV !== 'production' && { erreur: error.message }) });
   }
 });
 
@@ -135,8 +141,29 @@ router.post('/notify', async (req, res) => {
     const commande = await Commande.findById(cpm_custom);
     if (!commande) return res.status(404).send('Commande introuvable');
 
+    // Idempotence : si la commande est déjà traitée, ne pas rejouer
+    if (commande.paiement.statut !== 'en_attente') {
+      console.warn(`Webhook reçu pour commande déjà traitée : ${commande._id}`);
+      return res.status(200).send('OK');
+    }
+
     if (cpm_result === '00') {
-      // Paiement réussi
+      // ── Vérification critique du montant ──────────────────────────────────
+      // On compare le montant notifié par CinetPay avec celui enregistré en base.
+      // Sans cette vérification, un attaquant peut modifier le montant côté client
+      // et payer 1 FCFA pour une commande de 100 000 FCFA.
+      const montantNotifie = Number(cpm_amount);
+      if (montantNotifie !== commande.prixTotal) {
+        console.error(
+          `Fraude possible — montant CinetPay (${montantNotifie}) ≠ montant commande (${commande.prixTotal}) pour commande ${commande._id}`
+        );
+        commande.statut = 'annulee';
+        commande.paiement.statut = 'echec';
+        await commande.save();
+        return res.status(400).send('Montant invalide');
+      }
+
+      // Paiement réussi et montant vérifié
       commande.statut = 'payee';
       commande.paiement.statut = 'succes';
       commande.paiement.cpmTransId = cpm_trans_id;
@@ -182,74 +209,3 @@ router.get('/statut/:commandeId', proteger, async (req, res) => {
 });
 
 module.exports = router;
-
-
-// ─── Payer à la livraison ─────────────────────────────────────────────────────
-// POST /api/paiements/livraison
-router.post('/livraison', proteger, async (req, res) => {
-  try {
-    const { lignes, adresseLivraison } = req.body;
-
-    if (!lignes || lignes.length === 0) {
-      return res.status(400).json({ succes: false, message: 'Panier vide' });
-    }
-
-    let prixTotal = 0;
-    const lignesValidees = [];
-
-    for (const ligne of lignes) {
-      const produit = await Produit.findById(ligne.produitId);
-      if (!produit || !produit.actif) {
-        return res.status(400).json({ succes: false, message: `Produit introuvable: ${ligne.produitId}` });
-      }
-      if (produit.stock < ligne.quantite) {
-        return res.status(400).json({ succes: false, message: `Stock insuffisant pour: ${produit.nom}` });
-      }
-
-      lignesValidees.push({
-        produit: produit._id,
-        nom: produit.nom,
-        emoji: produit.emoji,
-        quantite: ligne.quantite,
-        prix: produit.prix
-      });
-      prixTotal += produit.prix * ligne.quantite;
-    }
-
-    const fraisLivraison = prixTotal >= 150000 ? 0 : 2000;
-    const totalFinal = prixTotal + fraisLivraison;
-
-    // Créer la commande — statut "confirmee", paiement à la livraison
-    const commande = await Commande.create({
-      utilisateur: req.utilisateur._id,
-      lignes: lignesValidees,
-      adresseLivraison,
-      prixTotal: totalFinal,
-      fraisLivraison,
-      statut: 'confirmee',
-      paiement: {
-        methode: 'cash_on_delivery',
-        statut: 'a_la_livraison'
-      }
-    });
-
-    // Décrémenter le stock immédiatement
-    for (const ligne of lignesValidees) {
-      await Produit.findByIdAndUpdate(ligne.produit, {
-        $inc: { stock: -ligne.quantite }
-      });
-    }
-
-    res.json({
-      succes: true,
-      commandeId: commande._id,
-      numeroCommande: commande.numeroCommande,
-      message: 'Commande confirmée — paiement à la livraison',
-      totalFinal
-    });
-
-  } catch (error) {
-    console.error('Erreur commande livraison:', error.message);
-    res.status(500).json({ succes: false, message: 'Erreur lors de la commande', erreur: error.message });
-  }
-});

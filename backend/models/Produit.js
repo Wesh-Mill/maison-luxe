@@ -73,4 +73,13 @@ produitSchema.methods.calculerNotemoyenne = function() {
   }
 };
 
+// ─── Index pour les requêtes fréquentes ──────────────────────────────────────
+// Sans ces index, MongoDB fait un full collection scan à chaque filtre.
+// Compound index sur les champs les plus filtrés ensemble dans GET /api/produits
+produitSchema.index({ actif: 1, categorie: 1, prix: 1 });
+produitSchema.index({ actif: 1, tags: 1 });
+produitSchema.index({ actif: 1, marque: 1 });
+// Index texte pour la recherche par mot-clé (champ q=)
+produitSchema.index({ nom: 'text', description: 'text', marque: 'text' });
+
 module.exports = mongoose.model('Produit', produitSchema);
