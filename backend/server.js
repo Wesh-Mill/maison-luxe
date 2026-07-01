@@ -1,11 +1,11 @@
 require('dotenv').config();
 
 // ─── Validation des variables d'environnement critiques ───────────────────────
-// Le serveur refuse de démarrer si une variable obligatoire est absente.
-// Mieux vaut un crash explicite au démarrage qu'un bug silencieux en production.
-const ENV_REQUIS = [
-  'MONGODB_URI',
-  'JWT_SECRET',
+// Le serveur doit impérativement avoir une base MongoDB et un secret JWT.
+// Les variables de paiement peuvent être absentes au premier déploiement ;
+// dans ce cas, l'API démarre en mode "paiement non configuré".
+const ENV_REQUIS = ['MONGODB_URI', 'JWT_SECRET'];
+const ENV_OPTIONNELLES = [
   'CINETPAY_API_KEY',
   'CINETPAY_SITE_ID',
   'CINETPAY_SECRET_KEY',
@@ -17,9 +17,19 @@ const ENV_REQUIS = [
 const envManquants = ENV_REQUIS.filter(k => !process.env[k]);
 if (envManquants.length > 0) {
   console.error('❌ Variables d\'environnement manquantes :', envManquants.join(', '));
-  console.error('   Copiez .env.example en .env et remplissez toutes les valeurs.');
+  console.error('   Configurez ces variables avant de démarrer l\'application.');
   process.exit(1);
 }
+
+const envOptionnellesManquantes = ENV_OPTIONNELLES.filter(k => !process.env[k]);
+if (envOptionnellesManquantes.length > 0) {
+  console.warn('⚠️ Variables de paiement/frontend non définies :', envOptionnellesManquantes.join(', '));
+  console.warn('   L\'API démarrera, mais les paiements seront indisponibles tant que la configuration Render sera complétée.');
+}
+
+process.env.CINETPAY_NOTIFY_URL ||= 'https://maison-luxe-api.onrender.com/api/paiements/notify';
+process.env.CINETPAY_RETURN_URL ||= 'https://wesh-mill.github.io/maison-luxe/';
+process.env.FRONTEND_URL ||= 'https://wesh-mill.github.io';
 
 const express = require('express');
 const cors = require('cors');

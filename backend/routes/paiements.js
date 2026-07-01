@@ -61,6 +61,14 @@ router.post('/initier', proteger, async (req, res) => {
       paiement: { methode: 'orange_money', statut: 'en_attente' }
     });
 
+    const paiementConfigure = process.env.CINETPAY_API_KEY && process.env.CINETPAY_SITE_ID && process.env.CINETPAY_SECRET_KEY;
+    if (!paiementConfigure) {
+      return res.status(503).json({
+        succes: false,
+        message: 'Le paiement n\'est pas encore configuré sur le serveur. Configurez CinetPay dans Render pour activer les paiements.'
+      });
+    }
+
     // Appel à l'API CinetPay (intégration Orange Money Mali)
     const transactionId = `ML-${commande._id}-${Date.now()}`;
     
