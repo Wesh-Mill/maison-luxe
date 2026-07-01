@@ -27,7 +27,7 @@ if (envOptionnellesManquantes.length > 0) {
   console.warn('   L\'API démarrera, mais les paiements seront indisponibles tant que la configuration Render sera complétée.');
 }
 
-process.env.CINETPAY_NOTIFY_URL ||= 'https://maison-luxe-api.onrender.com/api/paiements/notify';
+process.env.CINETPAY_NOTIFY_URL ||= 'https://maison-luxe-y6fm.onrender.com/api/paiements/notify';
 process.env.CINETPAY_RETURN_URL ||= 'https://wesh-mill.github.io/maison-luxe/';
 process.env.FRONTEND_URL ||= 'https://wesh-mill.github.io';
 
